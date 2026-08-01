@@ -53,13 +53,15 @@ fun ViewerScreen(
     var showNextChapterDialog by remember { mutableStateOf<Chapter?>(null) }
     val scope = rememberCoroutineScope()
 
+    // Tracking the absolute image index to sync between view modes
+    var currentImageIndex by remember { mutableIntStateOf(0) }
+
     LaunchedEffect(chapterUrl) {
         viewModel.loadPages(chapterUrl, mangaId, chapterId)
     }
 
     fun checkNextChapter() {
         val currentIndex = chapters.indexOfFirst { it.id == chapterId }
-        // For descending list (typical), next chapter is at currentIndex - 1
         if (currentIndex > 0) {
             showNextChapterDialog = chapters[currentIndex - 1]
         }
@@ -102,6 +104,29 @@ fun ViewerScreen(
         }
         val pagerCount = if (pagerCountRaw > 0) pagerCountRaw + 1 else 0
         val pagerState = rememberPagerState(pageCount = { pagerCount })
+
+        // Synchronize pager state when viewMode changes
+        LaunchedEffect(viewMode) {
+            val newPagerIndex = when (viewMode) {
+                ViewMode.SINGLE -> currentImageIndex
+                ViewMode.SPREAD -> currentImageIndex / 2
+                ViewMode.SPLIT -> currentImageIndex * 2
+            }
+            if (newPagerIndex < pagerCountRaw) {
+                pagerState.scrollToPage(newPagerIndex)
+            }
+        }
+
+        // Update currentImageIndex when pager moves
+        LaunchedEffect(pagerState.currentPage) {
+            if (pagerState.currentPage < pagerCountRaw) {
+                currentImageIndex = when (viewMode) {
+                    ViewMode.SINGLE -> pagerState.currentPage
+                    ViewMode.SPREAD -> pagerState.currentPage * 2
+                    ViewMode.SPLIT -> pagerState.currentPage / 2
+                }
+            }
+        }
 
         Box(
             modifier = Modifier
@@ -321,17 +346,20 @@ fun ViewerPage(
                     val pageIdx = index / 2
                     val isRightHalf = index % 2 == 1 
                     
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         AsyncImage(
                             model = if (pages[pageIdx].localPath != null) File(pages[pageIdx].localPath!!) else pages[pageIdx].imageUrl,
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
+                                    // Scale both X and Y equally to maintain aspect ratio
+                                    // We zoom 2x to make half the image fill the screen
                                     scaleX = 2f
+                                    scaleY = 2f
                                     translationX = if (isRightHalf) -size.width / 2 else size.width / 2
                                 },
-                            contentScale = ContentScale.FillHeight
+                            contentScale = ContentScale.Fit
                         )
                     }
                 }
