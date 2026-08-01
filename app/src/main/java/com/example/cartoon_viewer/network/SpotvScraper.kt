@@ -124,18 +124,20 @@ class SpotvScraper(context: Context) {
                 val dateText = btn.select(".free-date").text().split("(").first().trim()
                 
                 val id = link.split("wr_id=").lastOrNull()?.split("&")?.first() ?: ""
-                if (id.isNotEmpty() && title.isNotEmpty()) {
+                if (id.isNotEmpty() && title.isNotEmpty() && !title.contains("처음부터")) {
                     chapters.add(Chapter(id, title, link, thumb, dateText))
                 }
             }
 
             if (chapters.isEmpty()) {
-                doc.select("a[href*=wr_id=]").forEach { a ->
+                val listArea = doc.select(".episode-list, #comic-episode-list, .board-list").first() ?: doc
+                listArea.select("a[href*=wr_id=]").forEach { a ->
                     val link = a.attr("abs:href")
                     val title = a.text().trim()
                     val id = link.split("wr_id=").lastOrNull()?.split("&")?.first() ?: ""
                     if (id.isNotEmpty() && title.length > 1 && !chapters.any { it.id == id }) {
-                        if (!title.contains("목록") && !title.contains("다음")) {
+                        val skipKeywords = listOf("목록", "다음", "이전", "처음부터", "정렬", "최근일순", "등록일순")
+                        if (skipKeywords.none { title.contains(it) }) {
                             chapters.add(Chapter(id, title, link))
                         }
                     }

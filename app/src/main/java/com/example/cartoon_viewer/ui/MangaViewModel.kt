@@ -93,7 +93,10 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
                 scraper.fetchMoreManga(nextPage, currentSca, currentType)
             }
 
-            if (nextList.isEmpty()) {
+            // Check if we already have these items to avoid infinite duplicates
+            val isDuplicate = nextList.any { next -> _mangaList.value.any { existing -> existing.id == next.id } }
+
+            if (nextList.isEmpty() || isDuplicate) {
                 _isEndReached.value = true
             } else {
                 _mangaList.value = _mangaList.value + nextList
@@ -136,7 +139,11 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
             val pagedUrl = if (currentMangaUrl.contains("?")) "$currentMangaUrl&page=$nextPage" else "$currentMangaUrl?page=$nextPage"
             
             val nextList = scraper.fetchChapters(pagedUrl)
-            if (nextList.isEmpty()) {
+            
+            // Check if we already have these chapters to avoid infinite duplicates
+            val isDuplicate = nextList.any { next -> _chapters.value.any { existing -> existing.id == next.id } }
+            
+            if (nextList.isEmpty() || isDuplicate) {
                 _isChaptersEndReached.value = true
             } else {
                 val processedList = nextList.map { 
