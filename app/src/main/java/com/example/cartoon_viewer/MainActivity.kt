@@ -51,19 +51,41 @@ fun MainApp() {
                 onLibraryClick = {
                     navController.navigate("library")
                 },
+                onBookmarkClick = {
+                    navController.navigate("bookmarks")
+                },
+                onLastReadClick = { mangaId, chapterId, title, url, mangaUrl, mangaTitle, pageIndex ->
+                    val encodedManga = URLEncoder.encode(mangaTitle, StandardCharsets.UTF_8.toString())
+                    val encodedChapter = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
+                    val encodedUrl = URLEncoder.encode(url, StandardCharsets.UTF_8.toString())
+                    navController.navigate("viewer/$encodedManga/$encodedChapter/$mangaId/$chapterId/$encodedUrl/$pageIndex")
+                },
                 onZipFileClick = { fileName ->
-                    val encodedTitle = URLEncoder.encode(fileName, StandardCharsets.UTF_8.toString())
-                    navController.navigate("viewer/$encodedTitle/local/zip/local_zip")
+                    val encodedManga = URLEncoder.encode(fileName, StandardCharsets.UTF_8.toString())
+                    val encodedChapter = URLEncoder.encode("전체", StandardCharsets.UTF_8.toString())
+                    navController.navigate("viewer/$encodedManga/$encodedChapter/local/local/local_zip/0")
                 }
             )
         }
         composable("library") {
             LibraryScreen(
                 viewModel = viewModel,
-                onChapterClick = { mangaId, chapterId, title, url ->
-                    val encodedTitle = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
+                onChapterClick = { mangaId, chapterId, title, url, mangaTitle ->
+                    val encodedManga = URLEncoder.encode(mangaTitle, StandardCharsets.UTF_8.toString())
+                    val encodedChapter = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
                     val encodedUrl = if (url.isNotEmpty()) URLEncoder.encode(url, StandardCharsets.UTF_8.toString()) else "local"
-                    navController.navigate("viewer/$encodedTitle/$mangaId/$chapterId/$encodedUrl")
+                    navController.navigate("viewer/$encodedManga/$encodedChapter/$mangaId/$chapterId/$encodedUrl/0")
+                }
+            )
+        }
+        composable("bookmarks") {
+            BookmarkScreen(
+                viewModel = viewModel,
+                onChapterClick = { mangaId, chapterId, title, url, mangaUrl, mangaTitle, pageIndex ->
+                    val encodedManga = URLEncoder.encode(mangaTitle, StandardCharsets.UTF_8.toString())
+                    val encodedChapter = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
+                    val encodedUrl = URLEncoder.encode(url, StandardCharsets.UTF_8.toString())
+                    navController.navigate("viewer/$encodedManga/$encodedChapter/$mangaId/$chapterId/$encodedUrl/$pageIndex")
                 }
             )
         }
@@ -127,36 +149,65 @@ fun MainApp() {
                 mangaUrl = mangaUrl,
                 viewModel = viewModel,
                 onChapterClick = { chapter ->
-                    val encodedTitle = URLEncoder.encode(chapter.title, StandardCharsets.UTF_8.toString())
+                    val encodedManga = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
+                    val encodedChapter = URLEncoder.encode(chapter.title, StandardCharsets.UTF_8.toString())
                     val encodedUrl = URLEncoder.encode(chapter.link, StandardCharsets.UTF_8.toString())
-                    navController.navigate("viewer/$encodedTitle/$mangaId/${chapter.id}/$encodedUrl")
+                    navController.navigate("viewer/$encodedManga/$encodedChapter/$mangaId/${chapter.id}/$encodedUrl/0")
+                },
+                onFirstChapterClick = { firstUrl ->
+                    // To handle "first chapter click", we need a chapter object.
+                    // But we can also just find it in the list if available, or fetch it.
+                    // Actually, the simplest way is to let the viewer handle the URL directly if we can.
+                    // Or, find the chapter with this URL in the current list.
+                    val firstChapter = viewModel.chapters.value.find { it.link == firstUrl }
+                    if (firstChapter != null) {
+                        val encodedManga = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
+                        val encodedChapter = URLEncoder.encode(firstChapter.title, StandardCharsets.UTF_8.toString())
+                        val encodedUrl = URLEncoder.encode(firstChapter.link, StandardCharsets.UTF_8.toString())
+                        navController.navigate("viewer/$encodedManga/$encodedChapter/$mangaId/${firstChapter.id}/$encodedUrl/0")
+                    } else {
+                        // If not in list (paged), we might need to fetch or just use a placeholder
+                        val encodedManga = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
+                        val encodedChapter = URLEncoder.encode("1화", StandardCharsets.UTF_8.toString())
+                        val encodedUrl = URLEncoder.encode(firstUrl, StandardCharsets.UTF_8.toString())
+                        val wrId = firstUrl.substringAfter("wr_id=").substringBefore("&")
+                        navController.navigate("viewer/$encodedManga/$encodedChapter/$mangaId/$wrId/$encodedUrl/0")
+                    }
                 }
             )
         }
         composable(
-            "viewer/{chapterTitle}/{mangaId}/{chapterId}/{chapterUrl}",
+            "viewer/{mangaTitle}/{chapterTitle}/{mangaId}/{chapterId}/{chapterUrl}/{pageIndex}",
             arguments = listOf(
+                navArgument("mangaTitle") { type = NavType.StringType },
                 navArgument("chapterTitle") { type = NavType.StringType },
                 navArgument("mangaId") { type = NavType.StringType },
                 navArgument("chapterId") { type = NavType.StringType },
-                navArgument("chapterUrl") { type = NavType.StringType }
+                navArgument("chapterUrl") { type = NavType.StringType },
+                navArgument("pageIndex") { type = NavType.IntType; defaultValue = 0 }
             )
         ) { backStackEntry ->
-            val title = URLDecoder.decode(backStackEntry.arguments?.getString("chapterTitle") ?: "", StandardCharsets.UTF_8.toString())
+            val mTitle = URLDecoder.decode(backStackEntry.arguments?.getString("mangaTitle") ?: "", StandardCharsets.UTF_8.toString())
+            val cTitle = URLDecoder.decode(backStackEntry.arguments?.getString("chapterTitle") ?: "", StandardCharsets.UTF_8.toString())
             val mangaId = backStackEntry.arguments?.getString("mangaId") ?: ""
             val chapterId = backStackEntry.arguments?.getString("chapterId") ?: ""
             val url = URLDecoder.decode(backStackEntry.arguments?.getString("chapterUrl") ?: "", StandardCharsets.UTF_8.toString())
+            val pageIdx = backStackEntry.arguments?.getInt("pageIndex") ?: 0
+            
             ViewerScreen(
-                chapterTitle = title,
+                chapterTitle = cTitle,
+                mangaTitle = mTitle,
                 mangaId = mangaId,
                 chapterId = chapterId,
                 chapterUrl = url,
+                initialPageIndex = pageIdx,
                 viewModel = viewModel,
                 onNextChapterClick = { chapter ->
-                    val encodedTitle = URLEncoder.encode(chapter.title, StandardCharsets.UTF_8.toString())
+                    val encodedManga = URLEncoder.encode(mTitle, StandardCharsets.UTF_8.toString())
+                    val encodedChapter = URLEncoder.encode(chapter.title, StandardCharsets.UTF_8.toString())
                     val encodedUrl = URLEncoder.encode(chapter.link, StandardCharsets.UTF_8.toString())
-                    navController.navigate("viewer/$encodedTitle/$mangaId/${chapter.id}/$encodedUrl") {
-                        popUpTo("viewer/{chapterTitle}/{mangaId}/{chapterId}/{chapterUrl}") { inclusive = true }
+                    navController.navigate("viewer/$encodedManga/$encodedChapter/$mangaId/${chapter.id}/$encodedUrl/0") {
+                        popUpTo("viewer/{mangaTitle}/{chapterTitle}/{mangaId}/{chapterId}/{chapterUrl}/{pageIndex}") { inclusive = true }
                     }
                 }
             )

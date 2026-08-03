@@ -5,8 +5,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.cartoon_viewer.model.Chapter
 import com.example.cartoon_viewer.model.DownloadedChapter
+import com.example.cartoon_viewer.model.BookmarkedChapter
 import com.example.cartoon_viewer.model.Manga
+import com.example.cartoon_viewer.model.MangaDetail
 import com.example.cartoon_viewer.model.MangaPage
+import com.example.cartoon_viewer.ui.screens.ViewMode
+import com.example.cartoon_viewer.ui.screens.ReadingDirection
 import com.example.cartoon_viewer.network.LocalMangaManager
 import com.example.cartoon_viewer.network.SpotvScraper
 import com.example.cartoon_viewer.network.UrlProvider
@@ -22,6 +26,9 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
     private val _mangaList = MutableStateFlow<List<Manga>>(emptyList())
     val mangaList: StateFlow<List<Manga>> = _mangaList
 
+    private val _mangaDetail = MutableStateFlow<MangaDetail?>(null)
+    val mangaDetail: StateFlow<MangaDetail?> = _mangaDetail
+
     private val _chapters = MutableStateFlow<List<Chapter>>(emptyList())
     val chapters: StateFlow<List<Chapter>> = _chapters
 
@@ -30,6 +37,9 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _downloadedChapters = MutableStateFlow<List<DownloadedChapter>>(emptyList())
     val downloadedChapters: StateFlow<List<DownloadedChapter>> = _downloadedChapters
+
+    private val _bookmarkedChapters = MutableStateFlow<List<BookmarkedChapter>>(emptyList())
+    val bookmarkedChapters: StateFlow<List<BookmarkedChapter>> = _bookmarkedChapters
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
@@ -48,6 +58,20 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
     val isEndReached: StateFlow<Boolean> = _isEndReached
     private val _isChaptersEndReached = MutableStateFlow(false)
     val isChaptersEndReached: StateFlow<Boolean> = _isChaptersEndReached
+
+    // Viewer Settings (Global)
+    private val _viewMode = MutableStateFlow(ViewMode.SINGLE)
+    val viewMode: StateFlow<ViewMode> = _viewMode
+
+    private val _readingDirection = MutableStateFlow(ReadingDirection.LTR)
+    val readingDirection: StateFlow<ReadingDirection> = _readingDirection
+
+    private val _isFullscreen = MutableStateFlow(false)
+    val isFullscreen: StateFlow<Boolean> = _isFullscreen
+
+    fun updateViewMode(mode: ViewMode) { _viewMode.value = mode }
+    fun updateReadingDirection(dir: ReadingDirection) { _readingDirection.value = dir }
+    fun updateFullscreen(full: Boolean) { _isFullscreen.value = full }
 
     fun getBaseUrl(): String = urlProvider.baseUrl
     fun updateBaseUrl(url: String) {
@@ -122,8 +146,9 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
         
         viewModelScope.launch {
             _isLoading.value = true
-            val list = scraper.fetchChapters(mangaUrl)
-            _chapters.value = list.map { 
+            val detail = scraper.fetchMangaDetail(mangaUrl)
+            _mangaDetail.value = detail
+            _chapters.value = detail.chapters.map { 
                 it.copy(isDownloaded = localManager.isChapterDownloaded(mangaId, it.id))
             }
             _isLoading.value = false
@@ -196,6 +221,98 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadDownloadedChapters() {
         _downloadedChapters.value = localManager.getAllDownloadedChapters()
+    }
+
+    // Bookmark Logic
+    private val bookmarkPrefs = application.getSharedPreferences("bookmarks", android.content.Context.MODE_PRIVATE)
+
+    fun loadBookmarkedChapters() {
+        val bookmarks = bookmarkPrefs.getStringSet("bookmark_list", emptySet()) ?: emptySet()
+        _bookmarkedChapters.value = bookmarks.mapNotNull { data ->
+            val parts = data.split("|")
+            if (parts.size >= 8) {
+                BookmarkedChapter(
+                    mangaId = parts[0],
+                    mangaTitle = parts[1],
+                    mangaUrl = parts[2],
+                    chapter = Chapter(
+                        id = parts[3],
+                        title = parts[4],
+                        link = parts[5],
+                        thumbnailUrl = parts[6],
+                        date = parts[7]
+                    ),
+                    pageIndex = if (parts.size >= 9) parts[8].toIntOrNull() ?: 0 else 0
+                )
+            } else null
+        }.sortedByDescending { it.chapter.date }
+    }
+
+    fun toggleBookmark(mangaId: String, mangaTitle: String, mangaUrl: String, chapter: Chapter, pageIndex: Int) {
+        val bookmarks = bookmarkPrefs.getStringSet("bookmark_list", emptySet())?.toMutableSet() ?: mutableSetOf()
+        
+        // Find by mangaId (start) and chapterId (surrounded by |)
+        val existingEntry = bookmarks.find { 
+            it.startsWith("$mangaId|") && it.contains("|${chapter.id}|") 
+        }
+
+        if (existingEntry != null) {
+            bookmarks.remove(existingEntry)
+        } else {
+            val entryString = "$mangaId|$mangaTitle|$mangaUrl|${chapter.id}|${chapter.title}|${chapter.link}|${chapter.thumbnailUrl}|${chapter.date}|$pageIndex"
+            bookmarks.add(entryString)
+        }
+        
+        bookmarkPrefs.edit().putStringSet("bookmark_list", bookmarks).apply()
+        loadBookmarkedChapters()
+    }
+
+    fun isBookmarked(mangaId: String, chapterId: String): Boolean {
+        val bookmarks = bookmarkPrefs.getStringSet("bookmark_list", emptySet()) ?: emptySet()
+        return bookmarks.any { it.startsWith("$mangaId|") && it.contains("|$chapterId|") }
+    }
+
+    fun deleteBookmark(chapterId: String) {
+        val bookmarks = bookmarkPrefs.getStringSet("bookmark_list", emptySet())?.toMutableSet() ?: mutableSetOf()
+        val entry = bookmarks.find { it.contains("|$chapterId|") }
+        if (entry != null) {
+            bookmarks.remove(entry)
+            bookmarkPrefs.edit().putStringSet("bookmark_list", bookmarks).apply()
+            loadBookmarkedChapters()
+        }
+    }
+
+    // Last Read Persistence
+    private val lastReadPrefs = application.getSharedPreferences("last_read", android.content.Context.MODE_PRIVATE)
+    private val _lastRead = MutableStateFlow<BookmarkedChapter?>(null)
+    val lastRead: StateFlow<BookmarkedChapter?> = _lastRead
+
+    fun saveLastRead(mangaId: String, mangaTitle: String, mangaUrl: String, chapter: Chapter, pageIndex: Int) {
+        val data = "$mangaId|$mangaTitle|$mangaUrl|${chapter.id}|${chapter.title}|${chapter.link}|${chapter.thumbnailUrl}|${chapter.date}|$pageIndex"
+        lastReadPrefs.edit().putString("last_data", data).apply()
+        loadLastRead()
+    }
+
+    fun loadLastRead() {
+        val data = lastReadPrefs.getString("last_data", null)
+        if (data != null) {
+            val parts = data.split("|")
+            if (parts.size >= 8) {
+                _lastRead.value = BookmarkedChapter(
+                    mangaId = parts[0],
+                    mangaTitle = parts[1],
+                    mangaUrl = parts[2],
+                    chapter = Chapter(
+                        id = parts[3],
+                        title = parts[4],
+                        link = parts[5],
+                        thumbnailUrl = parts[6],
+                        date = parts[7]
+                    ),
+                    pageIndex = if (parts.size >= 9) parts[8].toIntOrNull() ?: 0 else 0
+                )
+            }
+        }
     }
 
     fun deleteChapter(mangaId: String, chapterId: String) {

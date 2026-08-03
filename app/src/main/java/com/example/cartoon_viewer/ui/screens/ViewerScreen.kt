@@ -6,22 +6,29 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
 import com.example.cartoon_viewer.model.Chapter
 import com.example.cartoon_viewer.model.MangaPage
 import com.example.cartoon_viewer.ui.MangaViewModel
@@ -34,30 +41,55 @@ enum class ViewMode(val displayName: String) {
     SPLIT("나눠보기")
 }
 
+enum class ReadingDirection(val displayName: String) {
+    LTR("왼쪽부터 읽기"),
+    RTL("오른쪽부터 읽기")
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ViewerScreen(
     chapterTitle: String,
+    mangaTitle: String = "",
     mangaId: String,
     chapterId: String,
     chapterUrl: String,
+    initialPageIndex: Int = 0,
     viewModel: MangaViewModel,
     onNextChapterClick: (Chapter) -> Unit
 ) {
     val pages by viewModel.pages.collectAsState()
     val chapters by viewModel.chapters.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
-    var viewMode by remember { mutableStateOf(ViewMode.SINGLE) }
-    var isFullscreen by remember { mutableStateOf(false) }
+    
+    val viewMode by viewModel.viewMode.collectAsState()
+    val readingDirection by viewModel.readingDirection.collectAsState()
+    val isFullscreen by viewModel.isFullscreen.collectAsState()
+    
     var showMenu by remember { mutableStateOf(false) }
     var showNextChapterDialog by remember { mutableStateOf<Chapter?>(null) }
     val scope = rememberCoroutineScope()
 
-    // Tracking the absolute image index to sync between view modes
-    var currentImageIndex by remember { mutableIntStateOf(0) }
+    var currentImageIndex by rememberSaveable { mutableIntStateOf(initialPageIndex) }
+    val bookmarkedChapters by viewModel.bookmarkedChapters.collectAsState()
+    
+    val isBookmarked = remember(chapterId, bookmarkedChapters) {
+        viewModel.isBookmarked(mangaId, chapterId)
+    }
+    
+    LaunchedEffect(Unit) {
+        viewModel.loadBookmarkedChapters()
+    }
 
     LaunchedEffect(chapterUrl) {
         viewModel.loadPages(chapterUrl, mangaId, chapterId)
+    }
+
+    // Auto-save last read
+    LaunchedEffect(currentImageIndex, pages) {
+        if (pages.isNotEmpty() && currentImageIndex < pages.size) {
+            viewModel.saveLastRead(mangaId, mangaTitle, "", Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
+        }
     }
 
     fun checkNextChapter() {
@@ -75,7 +107,16 @@ fun ViewerScreen(
                 TopAppBar(
                     title = { Text(chapterTitle) },
                     actions = {
-                        IconButton(onClick = { isFullscreen = true }) {
+                        IconButton(onClick = { 
+                            viewModel.toggleBookmark(mangaId, mangaTitle, "", Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
+                        }) {
+                            Icon(
+                                if (isBookmarked) Icons.Default.Star else Icons.Default.StarBorder,
+                                contentDescription = "Bookmark",
+                                tint = if (isBookmarked) Color(0xFFFFD700) else LocalContentColor.current
+                            )
+                        }
+                        IconButton(onClick = { viewModel.updateFullscreen(true) }) {
                             Icon(Icons.Default.Fullscreen, contentDescription = "Full Screen")
                         }
                         IconButton(onClick = { showMenu = true }) {
@@ -84,9 +125,31 @@ fun ViewerScreen(
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                             ViewMode.values().forEach { mode ->
                                 DropdownMenuItem(
-                                    text = { Text(mode.displayName) },
+                                    text = { 
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            RadioButton(selected = viewMode == mode, onClick = null)
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(mode.displayName)
+                                        }
+                                    },
                                     onClick = {
-                                        viewMode = mode
+                                        viewModel.updateViewMode(mode)
+                                        showMenu = false
+                                    }
+                                )
+                            }
+                            HorizontalDivider()
+                            ReadingDirection.values().forEach { dir ->
+                                DropdownMenuItem(
+                                    text = { 
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            RadioButton(selected = readingDirection == dir, onClick = null)
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(dir.displayName) 
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.updateReadingDirection(dir)
                                         showMenu = false
                                     }
                                 )
@@ -105,19 +168,17 @@ fun ViewerScreen(
         val pagerCount = if (pagerCountRaw > 0) pagerCountRaw + 1 else 0
         val pagerState = rememberPagerState(pageCount = { pagerCount })
 
-        // Synchronize pager state when viewMode changes
         LaunchedEffect(viewMode) {
             val newPagerIndex = when (viewMode) {
                 ViewMode.SINGLE -> currentImageIndex
                 ViewMode.SPREAD -> currentImageIndex / 2
                 ViewMode.SPLIT -> currentImageIndex * 2
             }
-            if (newPagerIndex < pagerCountRaw) {
+            if (newPagerIndex < pagerCountRaw && pagerState.currentPage != newPagerIndex) {
                 pagerState.scrollToPage(newPagerIndex)
             }
         }
 
-        // Update currentImageIndex when pager moves
         LaunchedEffect(pagerState.currentPage) {
             if (pagerState.currentPage < pagerCountRaw) {
                 currentImageIndex = when (viewMode) {
@@ -151,7 +212,7 @@ fun ViewerScreen(
                                 .pointerInput(Unit) {
                                     detectTapGestures(
                                         onTap = { checkNextChapter() },
-                                        onLongPress = { if (isFullscreen) isFullscreen = false }
+                                        onLongPress = { if (isFullscreen) viewModel.updateFullscreen(false) }
                                     )
                                 },
                             contentAlignment = Alignment.Center
@@ -167,6 +228,7 @@ fun ViewerScreen(
                             index = pageIndex,
                             pages = pages,
                             mode = viewMode,
+                            readingDirection = readingDirection,
                             onTapLeft = {
                                 if (pagerState.currentPage > 0) {
                                     scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
@@ -177,7 +239,7 @@ fun ViewerScreen(
                             },
                             onLongPress = {
                                 if (isFullscreen) {
-                                    isFullscreen = false
+                                    viewModel.updateFullscreen(false)
                                 }
                             },
                             onZoomChange = { zoomed ->
@@ -187,7 +249,68 @@ fun ViewerScreen(
                     }
                 }
 
-                // Bottom Slider (Shown in normal mode) - Compact version
+                if (isFullscreen) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.TopEnd
+                    ) {
+                        Row(
+                            modifier = Modifier.background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                        ) {
+                             IconButton(onClick = { 
+                                viewModel.toggleBookmark(mangaId, mangaTitle, "", Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
+                            }) {
+                                Icon(
+                                    if (isBookmarked) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = "Bookmark",
+                                    tint = if (isBookmarked) Color(0xFFFFD700) else Color.Black
+                                )
+                            }
+                            IconButton(onClick = { viewModel.updateFullscreen(false) }) {
+                                Icon(Icons.Default.FullscreenExit, contentDescription = "Exit Fullscreen", tint = Color.Black)
+                            }
+                            IconButton(onClick = { showMenu = true }) {
+                                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.Black)
+                                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                    ViewMode.values().forEach { mode ->
+                                        DropdownMenuItem(
+                                            text = { 
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    RadioButton(selected = viewMode == mode, onClick = null)
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text(mode.displayName)
+                                                }
+                                            },
+                                            onClick = {
+                                                viewModel.updateViewMode(mode)
+                                                showMenu = false
+                                            }
+                                        )
+                                    }
+                                    HorizontalDivider()
+                                    ReadingDirection.values().forEach { dir ->
+                                        DropdownMenuItem(
+                                            text = { 
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    RadioButton(selected = readingDirection == dir, onClick = null)
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text(dir.displayName) 
+                                                }
+                                            },
+                                            onClick = {
+                                                viewModel.updateReadingDirection(dir)
+                                                showMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (!isFullscreen) {
                     Column(
                         modifier = Modifier
@@ -249,6 +372,7 @@ fun ViewerPage(
     index: Int,
     pages: List<MangaPage>,
     mode: ViewMode,
+    readingDirection: ReadingDirection = ReadingDirection.LTR,
     onTapLeft: () -> Unit,
     onTapRight: () -> Unit,
     onLongPress: () -> Unit,
@@ -257,7 +381,6 @@ fun ViewerPage(
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
-    // Reset zoom when index changes (page switch)
     LaunchedEffect(index) {
         scale = 1f
         offset = Offset.Zero
@@ -269,7 +392,7 @@ fun ViewerPage(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { tapOffset ->
-                        if (scale <= 1f) { // Only navigate when not zoomed
+                        if (scale <= 1f) {
                             if (tapOffset.x < size.width / 3) {
                                 onTapLeft()
                             } else if (tapOffset.x > size.width * 2 / 3) {
@@ -320,10 +443,13 @@ fun ViewerPage(
                         val firstIdx = index * 2
                         val secondIdx = index * 2 + 1
                         
+                        val leftPageIdx = if (readingDirection == ReadingDirection.LTR) firstIdx else secondIdx
+                        val rightPageIdx = if (readingDirection == ReadingDirection.LTR) secondIdx else firstIdx
+
                         Box(modifier = Modifier.weight(1f)) {
-                            if (firstIdx < pages.size) {
+                            if (leftPageIdx < pages.size) {
                                 AsyncImage(
-                                    model = if (pages[firstIdx].localPath != null) File(pages[firstIdx].localPath!!) else pages[firstIdx].imageUrl,
+                                    model = if (pages[leftPageIdx].localPath != null) File(pages[leftPageIdx].localPath!!) else pages[leftPageIdx].imageUrl,
                                     contentDescription = null,
                                     modifier = Modifier.fillMaxSize(),
                                     contentScale = ContentScale.Fit
@@ -331,9 +457,9 @@ fun ViewerPage(
                             }
                         }
                         Box(modifier = Modifier.weight(1f)) {
-                            if (secondIdx < pages.size) {
+                            if (rightPageIdx < pages.size) {
                                 AsyncImage(
-                                    model = if (pages[secondIdx].localPath != null) File(pages[secondIdx].localPath!!) else pages[secondIdx].imageUrl,
+                                    model = if (pages[rightPageIdx].localPath != null) File(pages[rightPageIdx].localPath!!) else pages[rightPageIdx].imageUrl,
                                     contentDescription = null,
                                     modifier = Modifier.fillMaxSize(),
                                     contentScale = ContentScale.Fit
@@ -344,20 +470,48 @@ fun ViewerPage(
                 }
                 ViewMode.SPLIT -> {
                     val pageIdx = index / 2
-                    val isRightHalf = index % 2 == 1 
+                    val isSecondHalf = index % 2 == 1 
+                    val showRightSide = if (readingDirection == ReadingDirection.LTR) isSecondHalf else !isSecondHalf
+                    var imageSize by remember { mutableStateOf<IntSize?>(null) }
                     
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().clipToBounds(), 
+                        contentAlignment = Alignment.Center
+                    ) {
                         AsyncImage(
                             model = if (pages[pageIdx].localPath != null) File(pages[pageIdx].localPath!!) else pages[pageIdx].imageUrl,
                             contentDescription = null,
+                            onState = { state ->
+                                if (state is AsyncImagePainter.State.Success) {
+                                    imageSize = IntSize(
+                                        state.painter.intrinsicSize.width.toInt(),
+                                        state.painter.intrinsicSize.height.toInt()
+                                    )
+                                }
+                            },
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
-                                    // Scale both X and Y equally to maintain aspect ratio
-                                    // We zoom 2x to make half the image fill the screen
-                                    scaleX = 2f
-                                    scaleY = 2f
-                                    translationX = if (isRightHalf) -size.width / 2 else size.width / 2
+                                    imageSize?.let { src ->
+                                        val w = src.width.toFloat()
+                                        val h = src.height.toFloat()
+                                        val sw = size.width
+                                        val sh = size.height
+                                        
+                                        val f = minOf(sw / w, sh / h)
+                                        val totalScale = minOf(sw / (w / 2f), sh / h)
+                                        val k = totalScale / f
+
+                                        scaleX = k
+                                        scaleY = k
+                                        
+                                        val visualWidth = w * f * k
+                                        translationX = if (showRightSide) -visualWidth / 4f else visualWidth / 4f
+                                    } ?: run {
+                                        scaleX = 2f
+                                        scaleY = 2f
+                                        translationX = if (showRightSide) -size.width / 2f else size.width / 2f
+                                    }
                                 },
                             contentScale = ContentScale.Fit
                         )

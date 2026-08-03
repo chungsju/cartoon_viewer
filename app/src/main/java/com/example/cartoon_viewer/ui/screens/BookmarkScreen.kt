@@ -18,27 +18,29 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.cartoon_viewer.ui.MangaViewModel
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(
+fun BookmarkScreen(
     viewModel: MangaViewModel,
-    onChapterClick: (String, String, String, String, String) -> Unit 
+    onChapterClick: (String, String, String, String, String, String, Int) -> Unit 
 ) {
-    val downloadedChapters by viewModel.downloadedChapters.collectAsState()
+    val bookmarkedChapters by viewModel.bookmarkedChapters.collectAsState()
 
     LaunchedEffect(Unit) {
-        viewModel.loadDownloadedChapters()
+        viewModel.loadBookmarkedChapters()
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("보관함") })
+            TopAppBar(title = { Text("책갈피") })
         }
     ) { padding ->
-        if (downloadedChapters.isEmpty()) {
+        if (bookmarkedChapters.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("다운로드된 회차가 없습니다.")
+                Text("즐겨찾기한 회차가 없습니다.")
             }
         } else {
             LazyColumn(
@@ -46,10 +48,12 @@ fun LibraryScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                items(downloadedChapters) { item ->
+                items(bookmarkedChapters) { item ->
                     ListItem(
                         headlineContent = { Text(item.chapter.title) },
-                        supportingContent = { Text("${item.mangaTitle} • ${item.chapter.date}") },
+                        supportingContent = { 
+                            Text("${item.mangaTitle} • ${item.chapter.date} • ${item.pageIndex + 1}페이지") 
+                        },
                         leadingContent = {
                             AsyncImage(
                                 model = item.chapter.thumbnailUrl,
@@ -59,7 +63,7 @@ fun LibraryScreen(
                             )
                         },
                         trailingContent = {
-                            IconButton(onClick = { viewModel.deleteChapter(item.mangaId, item.chapter.id) }) {
+                            IconButton(onClick = { viewModel.deleteBookmark(item.chapter.id) }) {
                                 Icon(
                                     Icons.Default.Delete,
                                     contentDescription = "Delete",
@@ -68,7 +72,7 @@ fun LibraryScreen(
                             }
                         },
                         modifier = Modifier.clickable {
-                            onChapterClick(item.mangaId, item.chapter.id, item.chapter.title, "", item.mangaTitle)
+                            onChapterClick(item.mangaId, item.chapter.id, item.chapter.title, item.chapter.link, item.mangaUrl, item.mangaTitle, item.pageIndex)
                         }
                     )
                     HorizontalDivider()

@@ -19,10 +19,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.cartoon_viewer.model.Chapter
+import com.example.cartoon_viewer.model.MangaDetail
 import com.example.cartoon_viewer.ui.MangaViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -32,9 +36,11 @@ fun MangaDetailScreen(
     mangaId: String,
     mangaUrl: String,
     viewModel: MangaViewModel,
-    onChapterClick: (Chapter) -> Unit
+    onChapterClick: (Chapter) -> Unit,
+    onFirstChapterClick: (String) -> Unit
 ) {
     val chapters by viewModel.chapters.collectAsState()
+    val mangaDetail by viewModel.mangaDetail.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isDownloading by viewModel.isDownloading.collectAsState()
     val isChaptersEndReached by viewModel.isChaptersEndReached.collectAsState()
@@ -73,6 +79,12 @@ fun MangaDetailScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
+                item {
+                    mangaDetail?.let { detail ->
+                        MangaHeader(detail, onFirstChapterClick)
+                    }
+                }
+
                 items(chapters) { chapter ->
                     ListItem(
                         headlineContent = { Text(chapter.title) },
@@ -132,6 +144,75 @@ fun MangaDetailScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun MangaHeader(detail: MangaDetail, onFirstChapterClick: (String) -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            AsyncImage(
+                model = detail.thumbnailUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .width(100.dp)
+                    .height(140.dp),
+                contentScale = ContentScale.Crop
+            )
+            
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = detail.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                if (detail.author.isNotEmpty()) {
+                    Text("작가: ${detail.author}", style = MaterialTheme.typography.bodySmall)
+                }
+                if (detail.genre.isNotEmpty()) {
+                    Text("장르: ${detail.genre}", style = MaterialTheme.typography.bodySmall)
+                }
+                if (detail.classification.isNotEmpty()) {
+                    Text("분류: ${detail.classification}", style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(Modifier.height(8.dp))
+                
+                if (detail.firstEpisodeUrl.isNotEmpty()) {
+                    Button(
+                        onClick = { onFirstChapterClick(detail.firstEpisodeUrl) },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text("첫회부터 보기", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+        
+        if (detail.summary.isNotEmpty()) {
+            Text(
+                text = "소개:",
+                modifier = Modifier.padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = detail.summary,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

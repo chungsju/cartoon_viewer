@@ -11,6 +11,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,12 +43,19 @@ fun HomeScreen(
     onCategoryClick: (MangaCategory) -> Unit,
     onSearchClick: (String) -> Unit,
     onLibraryClick: () -> Unit,
+    onBookmarkClick: () -> Unit,
+    onLastReadClick: (String, String, String, String, String, String, Int) -> Unit,
     onZipFileClick: (String) -> Unit
 ) {
+    val lastRead by viewModel.lastRead.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var showUrlDialog by remember { mutableStateOf(false) }
     var newUrl by remember { mutableStateOf(viewModel.getBaseUrl()) }
     val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        viewModel.loadLastRead()
+    }
 
     val zipPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -144,6 +153,13 @@ fun HomeScreen(
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
                     item {
+                        lastRead?.let { lr ->
+                            LastReadButton(lr) {
+                                onLastReadClick(lr.mangaId, lr.chapter.id, lr.chapter.title, lr.chapter.link, lr.mangaUrl, lr.mangaTitle, lr.pageIndex)
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                        }
+                        
                         Text(
                             text = "카테고리",
                             style = MaterialTheme.typography.titleMedium.copy(
@@ -164,6 +180,10 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Spacer(modifier = Modifier.height(16.dp))
+                    }
+
+                    item {
+                        BookmarkButton(onBookmarkClick)
                     }
 
                     item {
@@ -279,10 +299,85 @@ fun LibraryButton(onClick: () -> Unit) {
 }
 
 @Composable
+fun LastReadButton(lastRead: com.example.cartoon_viewer.model.BookmarkedChapter, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.History,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "마지막 본 페이지 이어보기",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "${lastRead.mangaTitle} - ${lastRead.chapter.title} (${lastRead.pageIndex + 1}p)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun BookmarkButton(onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Star,
+                contentDescription = null,
+                tint = Color(0xFFFFD700) // Gold
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "내 책갈피 (즐겨찾기)",
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            )
+        }
+    }
+}
+
+@Composable
 fun ZipFileButton(onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(vertical = 4.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(

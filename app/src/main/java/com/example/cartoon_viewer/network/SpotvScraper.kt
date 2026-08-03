@@ -4,12 +4,14 @@ import android.content.Context
 import android.util.Log
 import com.example.cartoon_viewer.model.Chapter
 import com.example.cartoon_viewer.model.Manga
+import com.example.cartoon_viewer.model.MangaDetail
 import com.example.cartoon_viewer.model.MangaPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import java.util.concurrent.TimeUnit
 
 class SpotvScraper(context: Context) {
@@ -39,7 +41,6 @@ class SpotvScraper(context: Context) {
 
             val doc = Jsoup.parse(html, url)
             val mangaList = mutableListOf<Manga>()
-            // Use a more generic selector to include items without is-card class
             val items = doc.select("li[data-id]")
 
             for (item in items) {
@@ -87,6 +88,57 @@ class SpotvScraper(context: Context) {
         }
     }
 
+    private fun parseChaptersFromDoc(doc: Document, mangaUrl: String): List<Chapter> {
+        val chapters = mutableListOf<Chapter>()
+        val buttons = doc.select("#comic-episode-list li button.episode")
+
+        buttons.forEach { btn ->
+            val onClick = btn.attr("onclick")
+            var link = ""
+            val match = "location\\.href\\s*=\\s*[`\"'](.+?)[`\"']".toRegex().find(onClick)
+            val rawLink = match?.groupValues?.get(1) ?: ""
+            
+            if (rawLink.isNotEmpty()) {
+                link = if (rawLink.startsWith("./")) {
+                    val baseUrl = mangaUrl.substringBefore("/bbs/") + "/bbs/"
+                    baseUrl + rawLink.substring(2)
+                } else if (rawLink.startsWith("http")) {
+                    rawLink
+                } else {
+                    val baseUrl = mangaUrl.substringBefore("/bbs/") + "/bbs/"
+                    baseUrl + rawLink
+                }
+            }
+
+            val title = btn.select(".episode-title").text().trim()
+            val bannerStyle = btn.select(".episode-banner").attr("style")
+            var thumb = "url\\(['\"]?(.+?)['\"]?\\)".toRegex().find(bannerStyle)?.groupValues?.get(1) ?: ""
+            if (thumb.startsWith("//")) thumb = "https:$thumb"
+            val dateText = btn.select(".free-date").text().split("(").first().trim()
+            
+            val id = link.split("wr_id=").lastOrNull()?.split("&")?.first() ?: ""
+            if (id.isNotEmpty() && title.isNotEmpty() && !title.contains("처음부터")) {
+                chapters.add(Chapter(id, title, link, thumb, dateText))
+            }
+        }
+
+        if (chapters.isEmpty()) {
+            val listArea = doc.select(".episode-list, #comic-episode-list, .board-list").first() ?: doc
+            listArea.select("a[href*=wr_id=]").forEach { a ->
+                val link = a.attr("abs:href")
+                val title = a.text().trim()
+                val id = link.split("wr_id=").lastOrNull()?.split("&")?.first() ?: ""
+                if (id.isNotEmpty() && title.length > 1 && !chapters.any { it.id == id }) {
+                    val skipKeywords = listOf("목록", "다음", "이전", "처음부터", "정렬", "최근일순", "등록일순")
+                    if (skipKeywords.none { title.contains(it) }) {
+                        chapters.add(Chapter(id, title, link))
+                    }
+                }
+            }
+        }
+        return chapters
+    }
+
     suspend fun fetchChapters(mangaUrl: String): List<Chapter> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Fetching chapters: $mangaUrl")
@@ -96,59 +148,59 @@ class SpotvScraper(context: Context) {
             if (html.isEmpty()) return@withContext emptyList()
             
             val doc = Jsoup.parse(html, mangaUrl)
-            val chapters = mutableListOf<Chapter>()
-            val buttons = doc.select("#comic-episode-list li button.episode")
-
-            buttons.forEach { btn ->
-                val onClick = btn.attr("onclick")
-                var link = ""
-                val match = "location\\.href\\s*=\\s*[`\"'](.+?)[`\"']".toRegex().find(onClick)
-                val rawLink = match?.groupValues?.get(1) ?: ""
-                
-                if (rawLink.isNotEmpty()) {
-                    link = if (rawLink.startsWith("./")) {
-                        val baseUrl = mangaUrl.substringBefore("/bbs/") + "/bbs/"
-                        baseUrl + rawLink.substring(2)
-                    } else if (rawLink.startsWith("http")) {
-                        rawLink
-                    } else {
-                        val baseUrl = mangaUrl.substringBefore("/bbs/") + "/bbs/"
-                        baseUrl + rawLink
-                    }
-                }
-
-                val title = btn.select(".episode-title").text().trim()
-                val bannerStyle = btn.select(".episode-banner").attr("style")
-                var thumb = "url\\(['\"]?(.+?)['\"]?\\)".toRegex().find(bannerStyle)?.groupValues?.get(1) ?: ""
-                if (thumb.startsWith("//")) thumb = "https:$thumb"
-                val dateText = btn.select(".free-date").text().split("(").first().trim()
-                
-                val id = link.split("wr_id=").lastOrNull()?.split("&")?.first() ?: ""
-                if (id.isNotEmpty() && title.isNotEmpty() && !title.contains("처음부터")) {
-                    chapters.add(Chapter(id, title, link, thumb, dateText))
-                }
-            }
-
-            if (chapters.isEmpty()) {
-                val listArea = doc.select(".episode-list, #comic-episode-list, .board-list").first() ?: doc
-                listArea.select("a[href*=wr_id=]").forEach { a ->
-                    val link = a.attr("abs:href")
-                    val title = a.text().trim()
-                    val id = link.split("wr_id=").lastOrNull()?.split("&")?.first() ?: ""
-                    if (id.isNotEmpty() && title.length > 1 && !chapters.any { it.id == id }) {
-                        val skipKeywords = listOf("목록", "다음", "이전", "처음부터", "정렬", "최근일순", "등록일순")
-                        if (skipKeywords.none { title.contains(it) }) {
-                            chapters.add(Chapter(id, title, link))
-                        }
-                    }
-                }
-            }
-            
-            Log.d(TAG, "Parsed ${chapters.size} chapters")
-            chapters
+            parseChaptersFromDoc(doc, mangaUrl)
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching chapters: ${e.message}")
             emptyList()
+        }
+    }
+
+    suspend fun fetchMangaDetail(mangaUrl: String): MangaDetail = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Fetching manga detail: $mangaUrl")
+            val request = Request.Builder().url(mangaUrl).build()
+            val response = client.newCall(request).execute()
+            val html = response.body?.string() ?: ""
+            if (html.isEmpty()) return@withContext MangaDetail("", "")
+            
+            val doc = Jsoup.parse(html, mangaUrl)
+            val title = doc.select(".info .title").text().trim().ifEmpty { 
+                doc.select("meta[property=og:title]").attr("content")
+            }
+            val mangaId = mangaUrl.substringAfter("is=").substringBefore("&")
+            
+            val genre = doc.select(".genre:contains(장르) .genre-link").text().trim()
+            val classification = doc.select(".publisher:contains(분류) .genre-link").text().trim()
+            val author = doc.select(".publisher:contains(작가) .genre-link").text().trim().ifEmpty {
+                doc.select("meta[name=author]").attr("content")
+            }
+            val summary = doc.select(".content:contains(소개) .genre-link").text().trim().ifEmpty {
+                doc.select("meta[name=description]").attr("content").substringBefore("웹툰,만화")
+            }
+            
+            val firstEpisodeBtn = doc.select("a.btn-first-episode").first()
+            val firstEpisodeUrl = firstEpisodeBtn?.attr("abs:href") ?: ""
+            
+            val thumb = doc.select(".banner-wrap img").attr("abs:src").ifEmpty {
+                doc.select("meta[property=og:image]").attr("content")
+            }
+            
+            val chapters = parseChaptersFromDoc(doc, mangaUrl)
+            
+            MangaDetail(
+                mangaId = mangaId,
+                title = title,
+                author = author,
+                genre = genre,
+                classification = classification,
+                summary = summary,
+                firstEpisodeUrl = firstEpisodeUrl,
+                thumbnailUrl = if (thumb.startsWith("//")) "https:$thumb" else thumb,
+                chapters = chapters
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching manga detail: ${e.message}")
+            MangaDetail("", "")
         }
     }
 
@@ -162,7 +214,6 @@ class SpotvScraper(context: Context) {
             
             val pages = mutableListOf<MangaPage>()
             
-            // 1. JS 변수 img_list 추출
             val imgListPattern = "var\\s+img_list\\s*=\\s*\\[(.+?)\\]".toRegex(RegexOption.DOT_MATCHES_ALL)
             val match = imgListPattern.find(html)
             
@@ -211,7 +262,6 @@ class SpotvScraper(context: Context) {
             val doc = Jsoup.parse(html, searchUrl)
             val mangaList = mutableListOf<Manga>()
 
-            // 1. Try to use the toons_item structure (Search specific)
             val toonsItems = doc.select("li.toons_item")
             for (item in toonsItems) {
                 val id = item.attr("data-id")
@@ -220,7 +270,6 @@ class SpotvScraper(context: Context) {
                 var thumb = "url\\(['\"]?(.+?)['\"]?\\)".toRegex().find(thumbStyle)?.groupValues?.get(1) ?: ""
                 if (thumb.startsWith("//")) thumb = "https:$thumb"
                 
-                // Construct the link as seen in the page's JS
                 val link = "${urlProvider.baseUrl}bbs/board.php?bo_table=toons&stx=${java.net.URLEncoder.encode(title, "UTF-8")}&search=1&is=$id"
                 
                 if (id.isNotEmpty() && title.isNotEmpty()) {
@@ -228,7 +277,6 @@ class SpotvScraper(context: Context) {
                 }
             }
 
-            // 2. Try to use the standard is-card structure if present (Home/Category style)
             if (mangaList.isEmpty()) {
                 val items = doc.select("li.is-card")
                 for (item in items) {
@@ -251,7 +299,6 @@ class SpotvScraper(context: Context) {
                 }
             }
 
-            // 2. Fallback to general link search in the main content area
             if (mangaList.isEmpty()) {
                 val mainContent = doc.select("#main, .wrap").first() ?: doc
                 mainContent.select("a").forEach { a ->
@@ -264,9 +311,7 @@ class SpotvScraper(context: Context) {
                     
                     if (id.isNotEmpty() && !mangaList.any { it.id == id }) {
                         val title = a.text().trim()
-                        // If the title contains the query or is reasonably long, it might be a result
                         if (title.length > 1 && !title.contains("목록") && !title.contains("다음") && !title.contains("이전")) {
-                            // Try to find a thumbnail in the parent or siblings
                             var thumb = a.parent()?.select("img")?.first()?.attr("abs:src") ?: ""
                             if (thumb.isEmpty()) {
                                 thumb = a.parent()?.parent()?.select("img")?.first()?.attr("abs:src") ?: ""
@@ -279,10 +324,7 @@ class SpotvScraper(context: Context) {
                 }
             }
             
-            // 3. One more fallback: if we found results but they are all missing thumbnails, 
-            // maybe they are in a table and we should look for images differently.
             if (mangaList.isNotEmpty() && mangaList.all { it.thumbnailUrl.isEmpty() }) {
-                // Try to find images in the same row if it's a table
                 mangaList.forEachIndexed { index, manga ->
                     if (manga.thumbnailUrl.isEmpty()) {
                         val a = doc.select("a[href*=${manga.id}]").first()

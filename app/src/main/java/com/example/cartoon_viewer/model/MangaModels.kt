@@ -8,6 +8,18 @@ data class Manga(
     val category: String = ""
 )
 
+data class MangaDetail(
+    val mangaId: String,
+    val title: String,
+    val author: String = "",
+    val genre: String = "",
+    val classification: String = "",
+    val summary: String = "",
+    val firstEpisodeUrl: String = "",
+    val thumbnailUrl: String = "",
+    val chapters: List<Chapter> = emptyList()
+)
+
 data class Chapter(
     val id: String,
     val title: String,
@@ -26,6 +38,14 @@ data class DownloadedChapter(
     val mangaId: String,
     val mangaTitle: String,
     val chapter: Chapter
+)
+
+data class BookmarkedChapter(
+    val mangaId: String,
+    val mangaTitle: String,
+    val mangaUrl: String,
+    val chapter: Chapter,
+    val pageIndex: Int = 0
 )
 
 enum class MangaCategory(val title: String, val url: String) {
