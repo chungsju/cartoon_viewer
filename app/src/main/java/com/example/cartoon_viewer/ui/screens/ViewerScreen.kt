@@ -54,6 +54,7 @@ fun ViewerScreen(
     mangaId: String,
     chapterId: String,
     chapterUrl: String,
+    mangaUrl: String = "",
     initialPageIndex: Int = 0,
     viewModel: MangaViewModel,
     onNextChapterClick: (Chapter) -> Unit
@@ -88,7 +89,7 @@ fun ViewerScreen(
     // Auto-save last read
     LaunchedEffect(currentImageIndex, pages) {
         if (pages.isNotEmpty() && currentImageIndex < pages.size) {
-            viewModel.saveLastRead(mangaId, mangaTitle, "", Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
+            viewModel.saveLastRead(mangaId, mangaTitle, mangaUrl, Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
         }
     }
 
@@ -108,7 +109,7 @@ fun ViewerScreen(
                     title = { Text(chapterTitle) },
                     actions = {
                         IconButton(onClick = { 
-                            viewModel.toggleBookmark(mangaId, mangaTitle, "", Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
+                            viewModel.toggleBookmark(mangaId, mangaTitle, mangaUrl, Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
                         }) {
                             Icon(
                                 if (isBookmarked) Icons.Default.Star else Icons.Default.StarBorder,
@@ -260,7 +261,7 @@ fun ViewerScreen(
                             modifier = Modifier.background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                         ) {
                              IconButton(onClick = { 
-                                viewModel.toggleBookmark(mangaId, mangaTitle, "", Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
+                                viewModel.toggleBookmark(mangaId, mangaTitle, mangaUrl, Chapter(chapterId, chapterTitle, chapterUrl, thumbnailUrl = pages.firstOrNull()?.imageUrl ?: ""), currentImageIndex)
                             }) {
                                 Icon(
                                     if (isBookmarked) Icons.Default.Star else Icons.Default.StarBorder,

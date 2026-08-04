@@ -1,5 +1,6 @@
 package com.example.cartoon_viewer.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,6 +14,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +25,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -48,10 +54,51 @@ fun HomeScreen(
     onZipFileClick: (String) -> Unit
 ) {
     val lastRead by viewModel.lastRead.collectAsState()
+    val userEmail by viewModel.userEmail.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var showUrlDialog by remember { mutableStateOf(false) }
+    var showLogoutDialog by remember { mutableStateOf(false) }
     var newUrl by remember { mutableStateOf(viewModel.getBaseUrl()) }
     val context = LocalContext.current
+
+    val gso = remember {
+        try {
+            val clientId = context.getString(com.example.cartoon_viewer.R.string.default_web_client_id)
+            if (clientId.contains(".apps.googleusercontent.com")) {
+                GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                    .requestIdToken(clientId)
+                    .requestEmail()
+                    .build()
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("HomeScreen", "GSO initialization failed", e)
+            null
+        }
+    }
+    val googleSignInClient = remember(gso) { 
+        try {
+            gso?.let { GoogleSignIn.getClient(context, it) }
+        } catch (e: Exception) {
+            Log.e("HomeScreen", "GoogleSignInClient initialization failed", e)
+            null
+        }
+    }
+
+    val signInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(ApiException::class.java)
+            account.idToken?.let { token ->
+                viewModel.signInWithGoogle(token)
+            }
+        } catch (e: ApiException) {
+            Log.e("HomeScreen", "Google sign in failed", e)
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.loadLastRead()
@@ -90,6 +137,30 @@ fun HomeScreen(
                     containerColor = Color.Transparent
                 ),
                 actions = {
+                    IconButton(onClick = {
+                        if (userEmail == null) {
+                            if (googleSignInClient != null) {
+                                signInLauncher.launch(googleSignInClient.signInIntent)
+                            } else {
+                                Log.e("HomeScreen", "Google Sign In Client is NULL. Check Web Client ID.")
+                            }
+                        } else {
+                            showLogoutDialog = true
+                        }
+                    }) {
+                        Icon(
+                            if (userEmail != null) Icons.Default.CloudDone else Icons.Default.CloudSync,
+                            contentDescription = "Cloud Sync",
+                            tint = if (userEmail != null) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    if (userEmail != null) {
+                        Text(
+                            text = userEmail?.substringBefore("@") ?: "",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                    }
                     IconButton(onClick = { 
                         newUrl = viewModel.getBaseUrl()
                         showUrlDialog = true 
@@ -225,6 +296,30 @@ fun HomeScreen(
             dismissButton = {
                 TextButton(onClick = { showUrlDialog = false }) {
                     Text("취소")
+                }
+            }
+        )
+    }
+
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("클라우드 동기화") },
+            text = { Text("동기화를 해제하고 로그아웃 하시겠습니까?\n현재 계정: $userEmail") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.signOut()
+                    showLogoutDialog = false
+                }) {
+                    Text("동기화 해제", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.syncCloudData()
+                    showLogoutDialog = false
+                }) {
+                    Text("지금 동기화")
                 }
             }
         )
