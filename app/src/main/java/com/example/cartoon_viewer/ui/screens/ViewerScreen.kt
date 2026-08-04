@@ -298,19 +298,19 @@ fun ViewerScreen(
                                                     RadioButton(selected = readingDirection == dir, onClick = null)
                                                     Spacer(Modifier.width(8.dp))
                                                     Text(dir.displayName) 
-                                                }
-                                            },
-                                            onClick = {
-                                                viewModel.updateReadingDirection(dir)
-                                                showMenu = false
-                                            }
-                                        )
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.updateReadingDirection(dir)
+                                        showMenu = false
                                     }
-                                }
+                                )
                             }
                         }
                     }
                 }
+            }
+        }
 
                 if (!isFullscreen) {
                     Column(

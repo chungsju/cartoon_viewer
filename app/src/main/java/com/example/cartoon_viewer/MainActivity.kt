@@ -124,9 +124,6 @@ fun MainApp() {
             )
         ) { backStackEntry ->
             val title = backStackEntry.arguments?.getString("categoryTitle") ?: ""
-            // Navigation already decodes the argument once.
-            // If I encoded it twice, I need to decode it once? 
-            // Actually, let's just use it as is if it looks like a URL.
             val rawUrl = backStackEntry.arguments?.getString("url") ?: ""
             val url = if (rawUrl.startsWith("http")) rawUrl else URLDecoder.decode(rawUrl, StandardCharsets.UTF_8.toString())
             
@@ -165,7 +162,6 @@ fun MainApp() {
                     navController.navigate("viewer/$encodedManga/$encodedChapter/$mangaId/${chapter.id}/$encodedUrl/$encodedMUrl/0")
                 },
                 onFirstChapterClick = { firstUrl ->
-                    // ...
                     val firstChapter = viewModel.chapters.value.find { it.link == firstUrl }
                     if (firstChapter != null) {
                         val encodedManga = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
