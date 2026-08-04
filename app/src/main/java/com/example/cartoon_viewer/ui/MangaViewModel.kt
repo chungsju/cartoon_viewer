@@ -1,6 +1,7 @@
 package com.example.cartoon_viewer.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.cartoon_viewer.model.Chapter
@@ -12,6 +13,7 @@ import com.example.cartoon_viewer.model.MangaPage
 import com.example.cartoon_viewer.ui.screens.ViewMode
 import com.example.cartoon_viewer.ui.screens.ReadingDirection
 import com.example.cartoon_viewer.network.LocalMangaManager
+import com.example.cartoon_viewer.network.FirebaseManager
 import com.example.cartoon_viewer.network.SpotvScraper
 import com.example.cartoon_viewer.network.UrlProvider
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,11 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
     private val urlProvider = UrlProvider(application)
     private val scraper = SpotvScraper(application)
     private val localManager = LocalMangaManager(application)
+    private val firebaseManager = FirebaseManager()
+
+    // SharedPreferences for local storage
+    private val bookmarkPrefs = application.getSharedPreferences("bookmarks", android.content.Context.MODE_PRIVATE)
+    private val lastReadPrefs = application.getSharedPreferences("last_read", android.content.Context.MODE_PRIVATE)
 
     private val _mangaList = MutableStateFlow<List<Manga>>(emptyList())
     val mangaList: StateFlow<List<Manga>> = _mangaList
@@ -41,6 +48,9 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
     private val _bookmarkedChapters = MutableStateFlow<List<BookmarkedChapter>>(emptyList())
     val bookmarkedChapters: StateFlow<List<BookmarkedChapter>> = _bookmarkedChapters
 
+    private val _lastRead = MutableStateFlow<BookmarkedChapter?>(null)
+    val lastRead: StateFlow<BookmarkedChapter?> = _lastRead
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
@@ -59,6 +69,9 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
     private val _isChaptersEndReached = MutableStateFlow(false)
     val isChaptersEndReached: StateFlow<Boolean> = _isChaptersEndReached
 
+    private val _userEmail = MutableStateFlow<String?>(null)
+    val userEmail: StateFlow<String?> = _userEmail
+
     // Viewer Settings (Global)
     private val _viewMode = MutableStateFlow(ViewMode.SINGLE)
     val viewMode: StateFlow<ViewMode> = _viewMode
@@ -68,6 +81,69 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isFullscreen = MutableStateFlow(false)
     val isFullscreen: StateFlow<Boolean> = _isFullscreen
+
+    init {
+        try {
+            _userEmail.value = firebaseManager.currentUser?.email
+            if (_userEmail.value != null) {
+                syncCloudData()
+            } else {
+                loadLastRead()
+                loadBookmarkedChapters()
+            }
+        } catch (e: Exception) {
+            Log.e("MangaViewModel", "Firebase init failed", e)
+            loadLastRead()
+            loadBookmarkedChapters()
+        }
+    }
+
+    fun signInWithGoogle(idToken: String) {
+        viewModelScope.launch {
+            val uid = firebaseManager.signInWithGoogle(idToken)
+            if (uid != null) {
+                _userEmail.value = firebaseManager.currentUser?.email
+                syncCloudData()
+            }
+        }
+    }
+
+    fun signOut() {
+        firebaseManager.signOut()
+        _userEmail.value = null
+        loadLastRead()
+        loadBookmarkedChapters()
+    }
+
+    fun syncCloudData() {
+        viewModelScope.launch {
+            try {
+                firebaseManager.ensureAuthenticated()
+                // 1. Sync Last Read from cloud
+                val cloudLastRead = firebaseManager.loadLastRead()
+                if (cloudLastRead != null) {
+                    saveLastRead(cloudLastRead.mangaId, cloudLastRead.mangaTitle, cloudLastRead.mangaUrl, cloudLastRead.chapter, cloudLastRead.pageIndex, syncToCloud = false)
+                } else {
+                    loadLastRead()
+                }
+
+                // 2. Sync Bookmarks
+                loadBookmarkedChapters() // Load local first
+                val syncedBookmarks = firebaseManager.syncBookmarks(_bookmarkedChapters.value)
+                
+                // Save synced to local
+                val bookmarks = syncedBookmarks.map { b ->
+                    "${b.mangaId}|${b.mangaTitle}|${b.mangaUrl}|${b.chapter.id}|${b.chapter.title}|${b.chapter.link}|${b.chapter.thumbnailUrl}|${b.chapter.date}|${b.pageIndex}"
+                }.toSet()
+                bookmarkPrefs.edit().putStringSet("bookmark_list", bookmarks).apply()
+                _bookmarkedChapters.value = syncedBookmarks
+            } catch (e: Exception) {
+                Log.e("MangaViewModel", "Cloud sync failed", e)
+                loadLastRead()
+                loadBookmarkedChapters()
+            }
+        }
+    }
 
     fun updateViewMode(mode: ViewMode) { _viewMode.value = mode }
     fun updateReadingDirection(dir: ReadingDirection) { _readingDirection.value = dir }
@@ -117,7 +193,6 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
                 scraper.fetchMoreManga(nextPage, currentSca, currentType)
             }
 
-            // Check if we already have these items to avoid infinite duplicates
             val isDuplicate = nextList.any { next -> _mangaList.value.any { existing -> existing.id == next.id } }
 
             if (nextList.isEmpty() || isDuplicate) {
@@ -164,8 +239,6 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
             val pagedUrl = if (currentMangaUrl.contains("?")) "$currentMangaUrl&page=$nextPage" else "$currentMangaUrl?page=$nextPage"
             
             val nextList = scraper.fetchChapters(pagedUrl)
-            
-            // Check if we already have these chapters to avoid infinite duplicates
             val isDuplicate = nextList.any { next -> _chapters.value.any { existing -> existing.id == next.id } }
             
             if (nextList.isEmpty() || isDuplicate) {
@@ -223,9 +296,6 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
         _downloadedChapters.value = localManager.getAllDownloadedChapters()
     }
 
-    // Bookmark Logic
-    private val bookmarkPrefs = application.getSharedPreferences("bookmarks", android.content.Context.MODE_PRIVATE)
-
     fun loadBookmarkedChapters() {
         val bookmarks = bookmarkPrefs.getStringSet("bookmark_list", emptySet()) ?: emptySet()
         _bookmarkedChapters.value = bookmarks.mapNotNull { data ->
@@ -251,16 +321,27 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleBookmark(mangaId: String, mangaTitle: String, mangaUrl: String, chapter: Chapter, pageIndex: Int) {
         val bookmarks = bookmarkPrefs.getStringSet("bookmark_list", emptySet())?.toMutableSet() ?: mutableSetOf()
         
-        // Find by mangaId (start) and chapterId (surrounded by |)
         val existingEntry = bookmarks.find { 
             it.startsWith("$mangaId|") && it.contains("|${chapter.id}|") 
         }
 
         if (existingEntry != null) {
             bookmarks.remove(existingEntry)
+            viewModelScope.launch {
+                firebaseManager.deleteBookmarkFromCloud(chapter.id)
+            }
         } else {
-            val entryString = "$mangaId|$mangaTitle|$mangaUrl|${chapter.id}|${chapter.title}|${chapter.link}|${chapter.thumbnailUrl}|${chapter.date}|$pageIndex"
+            val thumb = chapter.thumbnailUrl.ifEmpty {
+                _chapters.value.find { it.id == chapter.id }?.thumbnailUrl ?: ""
+            }
+            val entryString = "$mangaId|$mangaTitle|$mangaUrl|${chapter.id}|${chapter.title}|${chapter.link}|$thumb|${chapter.date}|$pageIndex"
             bookmarks.add(entryString)
+            viewModelScope.launch {
+                val b = BookmarkedChapter(mangaId, mangaTitle, mangaUrl, chapter.copy(thumbnailUrl = thumb), pageIndex)
+                firebaseManager.ensureAuthenticated()?.let { uid ->
+                    firebaseManager.saveBookmarkToCloud(uid, b)
+                }
+            }
         }
         
         bookmarkPrefs.edit().putStringSet("bookmark_list", bookmarks).apply()
@@ -279,18 +360,22 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
             bookmarks.remove(entry)
             bookmarkPrefs.edit().putStringSet("bookmark_list", bookmarks).apply()
             loadBookmarkedChapters()
+            viewModelScope.launch {
+                firebaseManager.deleteBookmarkFromCloud(chapterId)
+            }
         }
     }
 
-    // Last Read Persistence
-    private val lastReadPrefs = application.getSharedPreferences("last_read", android.content.Context.MODE_PRIVATE)
-    private val _lastRead = MutableStateFlow<BookmarkedChapter?>(null)
-    val lastRead: StateFlow<BookmarkedChapter?> = _lastRead
-
-    fun saveLastRead(mangaId: String, mangaTitle: String, mangaUrl: String, chapter: Chapter, pageIndex: Int) {
+    fun saveLastRead(mangaId: String, mangaTitle: String, mangaUrl: String, chapter: Chapter, pageIndex: Int, syncToCloud: Boolean = true) {
         val data = "$mangaId|$mangaTitle|$mangaUrl|${chapter.id}|${chapter.title}|${chapter.link}|${chapter.thumbnailUrl}|${chapter.date}|$pageIndex"
         lastReadPrefs.edit().putString("last_data", data).apply()
         loadLastRead()
+        
+        if (syncToCloud) {
+            viewModelScope.launch {
+                firebaseManager.saveLastRead(BookmarkedChapter(mangaId, mangaTitle, mangaUrl, chapter, pageIndex))
+            }
+        }
     }
 
     fun loadLastRead() {
