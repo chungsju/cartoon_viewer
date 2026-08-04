@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "383783241360",
+    "project_id": "cartoonviewer",
+    "storage_bucket": "cartoonviewer.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:383783241360:android:8112aca2afb084fc4a7a15",
+        "android_client_info": {
+          "package_name": "com.example.cartoon_viewer"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "383783241360-05u0ue3p9k0sqacnckusms2oa7pb0ihk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.cartoon_viewer",
+            "certificate_hash": "0a352d41bcaf1af5e416ff01bcd3036daf4720a4"
+          }
+        },
+        {
+          "client_id": "383783241360-u9b600fa8maqp5l1smff3r6sdkmcqq6n.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCg2PM8zu_YhAHbNbrMXY2EyqX56h-gVLk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "383783241360-u9b600fa8maqp5l1smff3r6sdkmcqq6n.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
